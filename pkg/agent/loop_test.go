@@ -5,14 +5,40 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
+
+func newTestAgentLoop(t *testing.T, provider providers.LLMProvider) (*AgentLoop, string) {
+	t.Helper()
+
+	tmpDir, err := os.MkdirTemp("", "agent-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace:         tmpDir,
+				Model:             "test-model",
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+		},
+	}
+
+	msgBus := bus.NewMessageBus()
+	al := NewAgentLoop(cfg, msgBus, provider)
+	return al, tmpDir
+}
 
 func TestRecordLastChannel(t *testing.T) {
 	// Create temp workspace
@@ -340,6 +366,204 @@ func TestAgentLoop_Stop(t *testing.T) {
 	// Verify running is false (initial state or after Stop)
 	if al.running.Load() {
 		t.Error("Expected agent to be stopped (or never started)")
+	}
+}
+
+func TestNewSessionCommand_SuccessAndIsolation(t *testing.T) {
+	provider := &simpleMockProvider{response: "OK"}
+	al, tmpDir := newTestAgentLoop(t, provider)
+	defer os.RemoveAll(tmpDir)
+
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("No default agent found")
+	}
+
+	helper := testHelper{al: al}
+	ctx := context.Background()
+	msg := bus.InboundMessage{
+		Channel:  "test",
+		SenderID: "user1",
+		ChatID:   "chat1",
+		Content:  "hello",
+	}
+	_ = helper.executeAndGetResponse(t, ctx, msg)
+
+	oldKey := strings.ToLower(routing.BuildAgentMainSessionKey(agent.ID))
+	oldHistory := agent.Sessions.GetHistory(oldKey)
+	if len(oldHistory) == 0 {
+		t.Fatalf("Expected old session history to be populated")
+	}
+
+	response := helper.executeAndGetResponse(t, ctx, bus.InboundMessage{
+		Channel:  "test",
+		SenderID: "user1",
+		ChatID:   "chat1",
+		Content:  "/new",
+	})
+	if response != "Starting a new conversation..." {
+		t.Fatalf("Expected confirmation response, got %q", response)
+	}
+
+	overrideKey := buildSessionOverrideKey("test", "chat1", agent.ID)
+	newKey, ok := al.sessionOverride.Get(overrideKey)
+	if !ok {
+		t.Fatalf("Expected session override to be set")
+	}
+	if newKey == oldKey {
+		t.Fatalf("Expected new session key to differ from old session key")
+	}
+	newHistory := agent.Sessions.GetHistory(newKey)
+	if len(newHistory) != 0 {
+		t.Fatalf("Expected new session to start empty, got %d messages", len(newHistory))
+	}
+
+	_ = helper.executeAndGetResponse(t, ctx, bus.InboundMessage{
+		Channel:  "test",
+		SenderID: "user1",
+		ChatID:   "chat1",
+		Content:  "next",
+	})
+
+	newHistory = agent.Sessions.GetHistory(newKey)
+	if len(newHistory) != 2 {
+		t.Fatalf("Expected new session history to have 2 messages, got %d", len(newHistory))
+	}
+	oldHistoryAfter := agent.Sessions.GetHistory(oldKey)
+	if len(oldHistoryAfter) != len(oldHistory) {
+		t.Fatalf("Expected old session history to remain unchanged")
+	}
+}
+
+func TestNewSessionCommand_RejectsArgs(t *testing.T) {
+	provider := &simpleMockProvider{response: "OK"}
+	al, tmpDir := newTestAgentLoop(t, provider)
+	defer os.RemoveAll(tmpDir)
+
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("No default agent found")
+	}
+
+	helper := testHelper{al: al}
+	ctx := context.Background()
+	response := helper.executeAndGetResponse(t, ctx, bus.InboundMessage{
+		Channel:  "test",
+		SenderID: "user1",
+		ChatID:   "chat1",
+		Content:  "/new extra",
+	})
+	if response != "Usage: /new" {
+		t.Fatalf("Expected usage response, got %q", response)
+	}
+
+	overrideKey := buildSessionOverrideKey("test", "chat1", agent.ID)
+	if _, ok := al.sessionOverride.Get(overrideKey); ok {
+		t.Fatalf("Expected no session override to be set")
+	}
+}
+
+func TestNewSessionCommand_PreservesOldSessionOnDisk(t *testing.T) {
+	provider := &simpleMockProvider{response: "OK"}
+	al, tmpDir := newTestAgentLoop(t, provider)
+	defer os.RemoveAll(tmpDir)
+
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("No default agent found")
+	}
+
+	helper := testHelper{al: al}
+	ctx := context.Background()
+	_ = helper.executeAndGetResponse(t, ctx, bus.InboundMessage{
+		Channel:  "test",
+		SenderID: "user1",
+		ChatID:   "chat1",
+		Content:  "hello",
+	})
+
+	oldKey := strings.ToLower(routing.BuildAgentMainSessionKey(agent.ID))
+	filename := strings.ReplaceAll(oldKey, ":", "_") + ".json"
+	sessionsDir := filepath.Join(agent.Workspace, "sessions")
+	filePath := filepath.Join(sessionsDir, filename)
+	_ = os.Remove(filePath)
+
+	_ = helper.executeAndGetResponse(t, ctx, bus.InboundMessage{
+		Channel:  "test",
+		SenderID: "user1",
+		ChatID:   "chat1",
+		Content:  "/new",
+	})
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("Expected session file to exist after /new: %v", err)
+	}
+	if !strings.Contains(string(data), "hello") {
+		t.Fatalf("Expected session file to contain prior message")
+	}
+}
+
+func TestNewSessionCommand_NoCrossChatImpact(t *testing.T) {
+	provider := &simpleMockProvider{response: "OK"}
+	al, tmpDir := newTestAgentLoop(t, provider)
+	defer os.RemoveAll(tmpDir)
+
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("No default agent found")
+	}
+
+	helper := testHelper{al: al}
+	ctx := context.Background()
+	response := helper.executeAndGetResponse(t, ctx, bus.InboundMessage{
+		Channel:  "test",
+		SenderID: "user1",
+		ChatID:   "chat1",
+		Content:  "/new",
+		Metadata: map[string]string{
+			"peer_kind": "group",
+			"peer_id":   "group1",
+		},
+	})
+	if response != "Starting a new conversation..." {
+		t.Fatalf("Expected confirmation response, got %q", response)
+	}
+
+	overrideKey := buildSessionOverrideKey("test", "chat1", agent.ID)
+	newKey, ok := al.sessionOverride.Get(overrideKey)
+	if !ok {
+		t.Fatalf("Expected session override to be set")
+	}
+
+	_ = helper.executeAndGetResponse(t, ctx, bus.InboundMessage{
+		Channel:  "test",
+		SenderID: "user2",
+		ChatID:   "chat2",
+		Content:  "hello",
+		Metadata: map[string]string{
+			"peer_kind": "group",
+			"peer_id":   "group2",
+		},
+	})
+
+	chat2Key := strings.ToLower(routing.BuildAgentPeerSessionKey(routing.SessionKeyParams{
+		AgentID: agent.ID,
+		Channel: "test",
+		Peer: &routing.RoutePeer{
+			Kind: "group",
+			ID:   "group2",
+		},
+		DMScope: routing.DMScopeMain,
+	}))
+	chat2History := agent.Sessions.GetHistory(chat2Key)
+	if len(chat2History) != 2 {
+		t.Fatalf("Expected chat2 session history to have 2 messages, got %d", len(chat2History))
+	}
+
+	newHistory := agent.Sessions.GetHistory(newKey)
+	if len(newHistory) != 0 {
+		t.Fatalf("Expected chat1 override session to remain empty, got %d messages", len(newHistory))
 	}
 }
 
