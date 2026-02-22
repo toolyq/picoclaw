@@ -2,19 +2,52 @@ name: build
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "develop" ]
+  pull_request:
+    branches: [ "develop" ]
+  workflow_dispatch:
 
 jobs:
   build:
+    name: Build Multi-Platform
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
-      - name: Build
-        run: make build-all
+      - name: Build with GoReleaser (Snapshot)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          # 使用 --snapshot 模式编译，它会自动识别项目中的 .goreleaser.yaml 配置
+          # 该配置已包含 windows-amd64, linux-arm64, linux-amd64 等平台
+          args: build --snapshot --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOVERSION: ${{ steps.setup-go.outputs.go-version }}
+
+      - name: Upload Win64 Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: picoclaw-windows-amd64
+          path: dist/picoclaw_windows_amd64_v1/picoclaw.exe
+
+      - name: Upload Linux ARM64 Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: picoclaw-linux-arm64
+          path: dist/picoclaw_linux_arm64/picoclaw
+
+      - name: Upload Linux AMD64 Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: picoclaw-linux-amd64
+          path: dist/picoclaw_linux_amd64_v1/picoclaw
