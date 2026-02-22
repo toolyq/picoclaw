@@ -9,8 +9,10 @@ on:
 
 jobs:
   build:
-    name: Build Multi-Platform
+    name: Build and Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 必须赋予写入权限才能创建 Release
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,20 +38,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOVERSION: ${{ steps.setup-go.outputs.go-version }}
 
-      - name: Upload Win64 Binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: picoclaw-win64-${{ steps.date.outputs.date }}
-          path: dist/picoclaw_windows_amd64_v1/picoclaw.exe
+      # 统一重命名文件，使用通配符匹配目录，防止因为架构版本后缀导致找不到文件
+      - name: Prepare Files
+        run: |
+          mkdir -p release_binaries
+          find dist/picoclaw_windows_amd64* -name "picoclaw.exe" -exec cp {} release_binaries/picoclaw-win64-${{ steps.date.outputs.date }}.exe \;
+          find dist/picoclaw_linux_arm64* -name "picoclaw" -exec cp {} release_binaries/picoclaw-linux-arm64-${{ steps.date.outputs.date }} \;
+          find dist/picoclaw_linux_amd64* -name "picoclaw" -exec cp {} release_binaries/picoclaw-linux-amd64-${{ steps.date.outputs.date }} \;
+          ls -R release_binaries/
 
-      - name: Upload Linux ARM64 Binary
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: picoclaw-linux-arm64-${{ steps.date.outputs.date }}
-          path: dist/picoclaw_linux_arm64/picoclaw
-
-      - name: Upload Linux AMD64 Binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: picoclaw-linux-amd64-${{ steps.date.outputs.date }}
-          path: dist/picoclaw_linux_amd64_v1/picoclaw
+          tag_name: build-${{ steps.date.outputs.date }}
+          name: Build ${{ steps.date.outputs.date }}
+          draft: false
+          prerelease: true # 设置为预发布
+          files: |
+            release_binaries/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
