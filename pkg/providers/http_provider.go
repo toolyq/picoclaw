@@ -17,12 +17,14 @@ type HTTPProvider struct {
 }
 
 func NewHTTPProvider(apiKey, apiBase, proxy string) *HTTPProvider {
-	return NewHTTPProviderWithMaxTokensField(apiKey, apiBase, proxy, "", 120)
+	return &HTTPProvider{
+		delegate: openai_compat.NewProvider(apiKey, apiBase, proxy),
+	}
 }
 
-func NewHTTPProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string, timeoutSeconds int) *HTTPProvider {
+func NewHTTPProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string) *HTTPProvider {
 	return &HTTPProvider{
-		delegate: openai_compat.NewProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField, timeoutSeconds),
+		delegate: openai_compat.NewProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField),
 	}
 }
 
