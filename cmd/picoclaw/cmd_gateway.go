@@ -78,11 +78,10 @@ func gatewayCmd() {
 
 	// Setup cron tool and service
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
-	combinedWorkspace := cfg.WorkspacePath()
 	cronService := setupCronTool(
 		agentLoop,
 		msgBus,
-		combinedWorkspace,
+		cfg.WorkspacePath(),
 		cfg.Agents.Defaults.RestrictToWorkspace,
 		execTimeout,
 		cfg,
@@ -225,13 +224,12 @@ func gatewayCmd() {
 func setupCronTool(
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
-	workspace string, // workspace can contain '|' for allowed paths
+	workspace string,
 	restrict bool,
 	execTimeout time.Duration,
 	cfg *config.Config,
 ) *cron.CronService {
-	primaryWorkspace := strings.Split(workspace, "|")[0]
-	cronStorePath := filepath.Join(primaryWorkspace, "cron", "jobs.json")
+	cronStorePath := filepath.Join(workspace, "cron", "jobs.json")
 
 	// Create cron service
 	cronService := cron.NewCronService(cronStorePath, nil)

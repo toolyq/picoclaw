@@ -41,10 +41,7 @@ func NewAgentInstance(
 	provider providers.LLMProvider,
 ) *AgentInstance {
 	workspace := resolveAgentWorkspace(agentCfg, defaults)
-
-	// workspace can contain multiple paths separated by '|'
-	primaryWorkspace := strings.Split(workspace, "|")[0]
-	os.MkdirAll(primaryWorkspace, 0o755)
+	os.MkdirAll(workspace, 0o755)
 
 	model := resolveAgentModel(agentCfg, defaults)
 	fallbacks := resolveAgentFallbacks(agentCfg, defaults)
@@ -58,7 +55,7 @@ func NewAgentInstance(
 	toolsRegistry.Register(tools.NewEditFileTool(workspace, restrict))
 	toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict))
 
-	sessionsDir := filepath.Join(primaryWorkspace, "sessions")
+	sessionsDir := filepath.Join(workspace, "sessions")
 	sessionsManager := session.NewSessionManager(sessionsDir)
 
 	contextBuilder := NewContextBuilder(workspace)
@@ -151,16 +148,6 @@ func expandHome(path string) string {
 	if path == "" {
 		return path
 	}
-
-	// Handle multiple paths separated by |
-	if strings.Contains(path, "|") {
-		parts := strings.Split(path, "|")
-		for i, p := range parts {
-			parts[i] = expandHome(strings.TrimSpace(p))
-		}
-		return strings.Join(parts, "|")
-	}
-
 	if path[0] == '~' {
 		home, _ := os.UserHomeDir()
 		if len(path) > 1 && path[1] == '/' {

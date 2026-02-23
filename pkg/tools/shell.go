@@ -285,6 +285,11 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 			return "Command blocked by safety guard (path traversal detected)"
 		}
 
+		cwdPath, err := filepath.Abs(cwd)
+		if err != nil {
+			return ""
+		}
+
 		pathPattern := regexp.MustCompile(`[A-Za-z]:\\[^\\\"']+|/[^\s\"']+`)
 		matches := pathPattern.FindAllString(cmd, -1)
 
@@ -294,17 +299,12 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 				continue
 			}
 
-			allowedPaths := strings.Split(t.workingDir, "|")
-			found := false
-			for _, wp := range allowedPaths {
-				absWP, _ := filepath.Abs(wp)
-				if isWithinWorkspace(p, absWP) {
-					found = true
-					break
-				}
+			rel, err := filepath.Rel(cwdPath, p)
+			if err != nil {
+				continue
 			}
 
-			if !found {
+			if strings.HasPrefix(rel, "..") {
 				return "Command blocked by safety guard (path outside working dir)"
 			}
 		}
