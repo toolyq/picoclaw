@@ -20,6 +20,7 @@ type AgentInstance struct {
 	Model          string
 	Fallbacks      []string
 	Workspace      string
+	AllowedPaths   []string
 	MaxIterations  int
 	MaxTokens      int
 	Temperature    float64
@@ -43,17 +44,19 @@ func NewAgentInstance(
 	workspace := resolveAgentWorkspace(agentCfg, defaults)
 	os.MkdirAll(workspace, 0o755)
 
+	allowedPaths := resolveAgentAllowedPaths(agentCfg, defaults)
+
 	model := resolveAgentModel(agentCfg, defaults)
 	fallbacks := resolveAgentFallbacks(agentCfg, defaults)
 
 	restrict := defaults.RestrictToWorkspace
 	toolsRegistry := tools.NewToolRegistry()
-	toolsRegistry.Register(tools.NewReadFileTool(workspace, restrict))
-	toolsRegistry.Register(tools.NewWriteFileTool(workspace, restrict))
-	toolsRegistry.Register(tools.NewListDirTool(workspace, restrict))
-	toolsRegistry.Register(tools.NewExecToolWithConfig(workspace, restrict, cfg))
-	toolsRegistry.Register(tools.NewEditFileTool(workspace, restrict))
-	toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict))
+	toolsRegistry.Register(tools.NewReadFileTool(workspace, allowedPaths, restrict))
+	toolsRegistry.Register(tools.NewWriteFileTool(workspace, allowedPaths, restrict))
+	toolsRegistry.Register(tools.NewListDirTool(workspace, allowedPaths, restrict))
+	toolsRegistry.Register(tools.NewExecToolWithConfig(workspace, allowedPaths, restrict, cfg))
+	toolsRegistry.Register(tools.NewEditFileTool(workspace, allowedPaths, restrict))
+	toolsRegistry.Register(tools.NewAppendFileTool(workspace, allowedPaths, restrict))
 
 	sessionsDir := filepath.Join(workspace, "sessions")
 	sessionsManager := session.NewSessionManager(sessionsDir)
@@ -101,6 +104,7 @@ func NewAgentInstance(
 		Model:          model,
 		Fallbacks:      fallbacks,
 		Workspace:      workspace,
+		AllowedPaths:   allowedPaths,
 		MaxIterations:  maxIter,
 		MaxTokens:      maxTokens,
 		Temperature:    temperature,
@@ -118,14 +122,30 @@ func NewAgentInstance(
 // resolveAgentWorkspace determines the workspace directory for an agent.
 func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentDefaults) string {
 	if agentCfg != nil && strings.TrimSpace(agentCfg.Workspace) != "" {
-		return expandHome(strings.TrimSpace(agentCfg.Workspace))
+		return config.ExpandHome(strings.TrimSpace(agentCfg.Workspace))
 	}
 	if agentCfg == nil || agentCfg.Default || agentCfg.ID == "" || routing.NormalizeAgentID(agentCfg.ID) == "main" {
-		return expandHome(defaults.Workspace)
+		return config.ExpandHome(defaults.Workspace)
 	}
 	home, _ := os.UserHomeDir()
 	id := routing.NormalizeAgentID(agentCfg.ID)
 	return filepath.Join(home, ".picoclaw", "workspace-"+id)
+}
+
+// resolveAgentAllowedPaths resolves the additional allowed paths for an agent.
+func resolveAgentAllowedPaths(agentCfg *config.AgentConfig, defaults *config.AgentDefaults) []string {
+	var paths []string
+	if agentCfg != nil && len(agentCfg.AllowedPaths) > 0 {
+		paths = agentCfg.AllowedPaths
+	} else {
+		paths = defaults.AllowedPaths
+	}
+
+	expanded := make([]string, len(paths))
+	for i, p := range paths {
+		expanded[i] = config.ExpandHome(strings.TrimSpace(p))
+	}
+	return expanded
 }
 
 // resolveAgentModel resolves the primary model for an agent.
@@ -142,18 +162,4 @@ func resolveAgentFallbacks(agentCfg *config.AgentConfig, defaults *config.AgentD
 		return agentCfg.Model.Fallbacks
 	}
 	return defaults.ModelFallbacks
-}
-
-func expandHome(path string) string {
-	if path == "" {
-		return path
-	}
-	if path[0] == '~' {
-		home, _ := os.UserHomeDir()
-		if len(path) > 1 && path[1] == '/' {
-			return home + path[1:]
-		}
-		return home
-	}
-	return path
 }

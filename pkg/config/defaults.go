@@ -11,6 +11,7 @@ func DefaultConfig() *Config {
 		Agents: AgentsConfig{
 			Defaults: AgentDefaults{
 				Workspace:           "~/.picoclaw/workspace",
+				AllowedPaths:        []string{},
 				RestrictToWorkspace: true,
 				Provider:            "",
 				Model:               "glm-4.7",

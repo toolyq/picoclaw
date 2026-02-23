@@ -82,6 +82,7 @@ func gatewayCmd() {
 		agentLoop,
 		msgBus,
 		cfg.WorkspacePath(),
+		cfg.Agents.Defaults.AllowedPaths,
 		cfg.Agents.Defaults.RestrictToWorkspace,
 		execTimeout,
 		cfg,
@@ -225,6 +226,7 @@ func setupCronTool(
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
 	workspace string,
+	allowedPaths []string,
 	restrict bool,
 	execTimeout time.Duration,
 	cfg *config.Config,
@@ -234,8 +236,14 @@ func setupCronTool(
 	// Create cron service
 	cronService := cron.NewCronService(cronStorePath, nil)
 
+	// Expand allowed paths
+	expandedPaths := make([]string, len(allowedPaths))
+	for i, p := range allowedPaths {
+		expandedPaths[i] = config.ExpandHome(p)
+	}
+
 	// Create and register CronTool
-	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
+	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, expandedPaths, restrict, execTimeout, cfg)
 	agentLoop.RegisterTool(cronTool)
 
 	// Set the onJob handler

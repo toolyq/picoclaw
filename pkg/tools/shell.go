@@ -18,6 +18,7 @@ import (
 
 type ExecTool struct {
 	workingDir          string
+	allowedPaths        []string
 	timeout             time.Duration
 	denyPatterns        []*regexp.Regexp
 	allowPatterns       []*regexp.Regexp
@@ -69,11 +70,11 @@ var defaultDenyPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bsource\s+.*\.sh\b`),
 }
 
-func NewExecTool(workingDir string, restrict bool) *ExecTool {
-	return NewExecToolWithConfig(workingDir, restrict, nil)
+func NewExecTool(workingDir string, allowedPaths []string, restrict bool) *ExecTool {
+	return NewExecToolWithConfig(workingDir, allowedPaths, restrict, nil)
 }
 
-func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Config) *ExecTool {
+func NewExecToolWithConfig(workingDir string, allowedPaths []string, restrict bool, config *config.Config) *ExecTool {
 	denyPatterns := make([]*regexp.Regexp, 0)
 
 	enableDenyPatterns := true
@@ -104,6 +105,7 @@ func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Conf
 
 	return &ExecTool{
 		workingDir:          workingDir,
+		allowedPaths:        allowedPaths,
 		timeout:             60 * time.Second,
 		denyPatterns:        denyPatterns,
 		allowPatterns:       nil,
@@ -145,7 +147,7 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *ToolResult
 	cwd := t.workingDir
 	if wd, ok := args["working_dir"].(string); ok && wd != "" {
 		if t.restrictToWorkspace && t.workingDir != "" {
-			resolvedWD, err := validatePath(wd, t.workingDir, true)
+			resolvedWD, err := validatePath(wd, t.workingDir, t.allowedPaths, true)
 			if err != nil {
 				return ErrorResult("Command blocked by safety guard (" + err.Error() + ")")
 			}

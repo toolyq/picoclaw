@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// validatePath ensures the given path is within the workspace if restrict is true.
-func validatePath(path, workspace string, restrict bool) (string, error) {
+// validatePath ensures the given path is within the workspace or allowed_paths if restrict is true.
+func validatePath(path, workspace string, allowedPaths []string, restrict bool) (string, error) {
 	if workspace == "" {
 		return path, nil
 	}
@@ -30,25 +30,104 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 	}
 
 	if restrict {
-		if !isWithinWorkspace(absPath, absWorkspace) {
-			return "", fmt.Errorf("access denied: path is outside the workspace")
+		// Prepare all real allowed paths (resolving symlinks for roots)
+		realRoots := make([]string, 0, 1+len(allowedPaths))
+		if resolved, err := filepath.EvalSymlinks(absWorkspace); err == nil {
+			realRoots = append(realRoots, resolved)
+		} else {
+			realRoots = append(realRoots, absWorkspace)
 		}
 
+		for _, p := range allowedPaths {
+			if p == "" {
+				continue
+			}
+			absP, err := filepath.Abs(p)
+			if err != nil {
+				continue
+			}
+			if resolved, err := filepath.EvalSymlinks(absP); err == nil {
+				realRoots = append(realRoots, resolved)
+			} else {
+				realRoots = append(realRoots, absP)
+			}
+		}
+
+		// Check primary path first (against both abs and real roots)
+		allowed := isWithinWorkspace(absPath, absWorkspace)
+		if !allowed {
+			for _, r := range realRoots {
+				if isWithinWorkspace(absPath, r) {
+					allowed = true
+					break
+				}
+			}
+		}
+		if !allowed {
+			for _, p := range allowedPaths {
+				if p == "" {
+					continue
+				}
+				absP, _ := filepath.Abs(p)
+				if isWithinWorkspace(absPath, absP) {
+					allowed = true
+					break
+				}
+			}
+		}
+
+		if !allowed {
+			return "", fmt.Errorf("access denied: path is outside the workspace and allowed paths")
+		}
+
+		// Verify symlinks don't escape
 		var resolved string
-		workspaceReal := absWorkspace
-		if resolved, err = filepath.EvalSymlinks(absWorkspace); err == nil {
-			workspaceReal = resolved
-		}
-
 		if resolved, err = filepath.EvalSymlinks(absPath); err == nil {
-			if !isWithinWorkspace(resolved, workspaceReal) {
-				return "", fmt.Errorf("access denied: symlink resolves outside workspace")
+			// Check if resolved path is within any allowed root (abs or real)
+			allowedResolved := isWithinWorkspace(resolved, absWorkspace)
+			if !allowedResolved {
+				for _, r := range realRoots {
+					if isWithinWorkspace(resolved, r) {
+						allowedResolved = true
+						break
+					}
+				}
+			}
+			if !allowedResolved {
+				for _, p := range allowedPaths {
+					absP, _ := filepath.Abs(p)
+					if isWithinWorkspace(resolved, absP) {
+						allowedResolved = true
+						break
+					}
+				}
+			}
+			if !allowedResolved {
+				return "", fmt.Errorf("access denied: symlink resolves outside workspace and allowed paths")
 			}
 		} else if os.IsNotExist(err) {
 			var parentResolved string
 			if parentResolved, err = resolveExistingAncestor(filepath.Dir(absPath)); err == nil {
-				if !isWithinWorkspace(parentResolved, workspaceReal) {
-					return "", fmt.Errorf("access denied: symlink resolves outside workspace")
+				allowedResolved := isWithinWorkspace(parentResolved, absWorkspace)
+				if !allowedResolved {
+					for _, r := range realRoots {
+						if isWithinWorkspace(parentResolved, r) {
+							allowedResolved = true
+							break
+						}
+					}
+				}
+				if !allowedResolved {
+					for _, p := range allowedPaths {
+						absP, _ := filepath.Abs(p)
+						if isWithinWorkspace(parentResolved, absP) {
+							allowedResolved = true
+							break
+						}
+					}
+				}
+				if !allowedResolved {
+					return "", fmt.Errorf("access denied: symlink resolves outside workspace and allowed paths")
 				}
 			} else if !os.IsNotExist(err) {
 				return "", fmt.Errorf("failed to resolve path: %w", err)
@@ -80,12 +159,13 @@ func isWithinWorkspace(candidate, workspace string) bool {
 }
 
 type ReadFileTool struct {
-	workspace string
-	restrict  bool
+	workspace    string
+	allowedPaths []string
+	restrict     bool
 }
 
-func NewReadFileTool(workspace string, restrict bool) *ReadFileTool {
-	return &ReadFileTool{workspace: workspace, restrict: restrict}
+func NewReadFileTool(workspace string, allowedPaths []string, restrict bool) *ReadFileTool {
+	return &ReadFileTool{workspace: workspace, allowedPaths: allowedPaths, restrict: restrict}
 }
 
 func (t *ReadFileTool) Name() string {
@@ -115,7 +195,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		return ErrorResult("path is required")
 	}
 
-	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
+	resolvedPath, err := validatePath(path, t.workspace, t.allowedPaths, t.restrict)
 	if err != nil {
 		return ErrorResult(err.Error())
 	}
@@ -129,12 +209,13 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 }
 
 type WriteFileTool struct {
-	workspace string
-	restrict  bool
+	workspace    string
+	allowedPaths []string
+	restrict     bool
 }
 
-func NewWriteFileTool(workspace string, restrict bool) *WriteFileTool {
-	return &WriteFileTool{workspace: workspace, restrict: restrict}
+func NewWriteFileTool(workspace string, allowedPaths []string, restrict bool) *WriteFileTool {
+	return &WriteFileTool{workspace: workspace, allowedPaths: allowedPaths, restrict: restrict}
 }
 
 func (t *WriteFileTool) Name() string {
@@ -173,7 +254,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 		return ErrorResult("content is required")
 	}
 
-	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
+	resolvedPath, err := validatePath(path, t.workspace, t.allowedPaths, t.restrict)
 	if err != nil {
 		return ErrorResult(err.Error())
 	}
@@ -191,12 +272,13 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 }
 
 type ListDirTool struct {
-	workspace string
-	restrict  bool
+	workspace    string
+	allowedPaths []string
+	restrict     bool
 }
 
-func NewListDirTool(workspace string, restrict bool) *ListDirTool {
-	return &ListDirTool{workspace: workspace, restrict: restrict}
+func NewListDirTool(workspace string, allowedPaths []string, restrict bool) *ListDirTool {
+	return &ListDirTool{workspace: workspace, allowedPaths: allowedPaths, restrict: restrict}
 }
 
 func (t *ListDirTool) Name() string {
@@ -226,7 +308,7 @@ func (t *ListDirTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 		path = "."
 	}
 
-	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
+	resolvedPath, err := validatePath(path, t.workspace, t.allowedPaths, t.restrict)
 	if err != nil {
 		return ErrorResult(err.Error())
 	}

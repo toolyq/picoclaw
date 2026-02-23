@@ -133,6 +133,7 @@ type AgentConfig struct {
 	Default   bool              `json:"default,omitempty"`
 	Name      string            `json:"name,omitempty"`
 	Workspace string            `json:"workspace,omitempty"`
+	AllowedPaths []string       `json:"allowed_paths,omitempty"`
 	Model     *AgentModelConfig `json:"model,omitempty"`
 	Skills    []string          `json:"skills,omitempty"`
 	Subagents *SubagentsConfig  `json:"subagents,omitempty"`
@@ -168,6 +169,7 @@ type SessionConfig struct {
 
 type AgentDefaults struct {
 	Workspace           string   `json:"workspace"                       env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
+	AllowedPaths        []string `json:"allowed_paths,omitempty"         env:"PICOCLAW_AGENTS_DEFAULTS_ALLOWED_PATHS"`
 	RestrictToWorkspace bool     `json:"restrict_to_workspace"           env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
 	Provider            string   `json:"provider"                        env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
 	Model               string   `json:"model"                           env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"`
@@ -657,4 +659,19 @@ func (c *Config) ValidateModelList() error {
 		}
 	}
 	return nil
+}
+
+// ExpandHome expands the ~ prefix to the user's home directory.
+func ExpandHome(path string) string {
+	if path == "" {
+		return path
+	}
+	if path[0] == '~' {
+		home, _ := os.UserHomeDir()
+		if len(path) > 1 && (path[1] == '/' || path[1] == '\\') {
+			return home + path[1:]
+		}
+		return home
+	}
+	return path
 }

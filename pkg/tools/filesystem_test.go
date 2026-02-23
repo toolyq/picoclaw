@@ -267,7 +267,7 @@ func TestFilesystemTool_ReadFile_RejectsSymlinkEscape(t *testing.T) {
 		t.Skipf("symlink not supported in this environment: %v", err)
 	}
 
-	tool := NewReadFileTool(workspace, true)
+	tool := NewReadFileTool(workspace, nil, true)
 	result := tool.Execute(context.Background(), map[string]any{
 		"path": link,
 	})
