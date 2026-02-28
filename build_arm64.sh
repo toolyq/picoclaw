@@ -25,8 +25,17 @@ rm -rf cmd/picoclaw/internal/onboard/workspace
 cp -r workspace cmd/picoclaw/internal/onboard/workspace
 
 # 设置环境变量并进行交叉编译
+echo "[INFO] Building PicoClaw..."
 GOOS=linux GOARCH=arm64 go build -v -tags stdjson ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-linux-arm64 ./${CMD_DIR}
 BUILD_STATUS=$?
+
+echo "[INFO] Building PicoClaw Launcher..."
+GOOS=linux GOARCH=arm64 go build -v -tags stdjson ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-launcher-linux-arm64 ./cmd/picoclaw-launcher
+if [ $? -ne 0 ]; then BUILD_STATUS=1; fi
+
+echo "[INFO] Building PicoClaw Launcher TUI..."
+GOOS=linux GOARCH=arm64 go build -v -tags stdjson ${LDFLAGS} -o ${BUILD_DIR}/${BINARY_NAME}-launcher-tui-linux-arm64 ./cmd/picoclaw-launcher-tui
+if [ $? -ne 0 ]; then BUILD_STATUS=1; fi
 
 # 清理
 rm -rf cmd/picoclaw/internal/onboard/workspace

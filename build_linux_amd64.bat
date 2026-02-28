@@ -31,8 +31,26 @@ echo [INFO] Building for Ubuntu AMD64 (Linux/amd64)...
 if not exist "build" mkdir "build"
 
 :: 构建并添加版本信息（参考 Makefile 中的 LDFLAGS）
+echo [INFO] Building PicoClaw...
 go build -v -tags stdjson -ldflags "-s -w" -o build/picoclaw-linux-amd64 ./cmd/picoclaw
-set BUILD_STATUS=%ERRORLEVEL%
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Failed to build PicoClaw.
+    set BUILD_STATUS=%ERRORLEVEL%
+)
+
+echo [INFO] Building PicoClaw Launcher...
+go build -v -tags stdjson -ldflags "-s -w" -o build/picoclaw-launcher-linux-amd64 ./cmd/picoclaw-launcher
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Failed to build PicoClaw Launcher.
+    set BUILD_STATUS=%ERRORLEVEL%
+)
+
+echo [INFO] Building PicoClaw Launcher TUI...
+go build -v -tags stdjson -ldflags "-s -w" -o build/picoclaw-launcher-tui-linux-amd64 ./cmd/picoclaw-launcher-tui
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Failed to build PicoClaw Launcher TUI.
+    set BUILD_STATUS=%ERRORLEVEL%
+)
 
 echo [INFO] Cleaning up staged workspace...
 if exist "cmd\picoclaw\internal\onboard\workspace" rmdir /s /q "cmd\picoclaw\internal\onboard\workspace"
