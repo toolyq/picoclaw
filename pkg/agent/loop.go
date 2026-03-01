@@ -33,6 +33,10 @@ import (
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
+// cancelHandle wraps a context.CancelFunc in a pointer so that sync.Map
+// CompareAndDelete can use pointer equality (function values are not comparable).
+type cancelHandle struct{ cancel context.CancelFunc }
+
 type AgentLoop struct {
 	bus            *bus.MessageBus
 	cfg            *config.Config
@@ -43,6 +47,10 @@ type AgentLoop struct {
 	fallback       *providers.FallbackChain
 	channelManager *channels.Manager
 	mediaStore     media.MediaStore
+
+	// activeSessions tracks active LLM processing per session key for cancellation.
+	// Values are *cancelHandle.
+	activeSessions sync.Map
 }
 
 // processOptions configures how a message is processed
@@ -252,8 +260,9 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				continue
 			}
 
-			// Process message
-			func() {
+			// Process message in a goroutine so that commands like /reset can be
+			// picked up from the bus immediately while an LLM call is in flight.
+			go func(msg bus.InboundMessage) {
 				// TODO: Re-enable media cleanup after inbound media is properly consumed by the agent.
 				// Currently disabled because files are deleted before the LLM can access their content.
 				// defer func() {
@@ -306,7 +315,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 						)
 					}
 				}
-			}()
+			}(msg)
 		}
 	}
 
@@ -448,6 +457,17 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	// Route system messages to processSystemMessage
 	if msg.Channel == "system" {
 		return al.processSystemMessage(ctx, msg)
+	}
+
+	// Reset message-tool state for this round so we don't skip publishing due to a previous round.
+	// We do this before handleCommand because commands also trigger outbound publishing.
+	defaultAgent := al.registry.GetDefaultAgent()
+	if defaultAgent != nil {
+		if tool, ok := defaultAgent.Tools.Get("message"); ok {
+			if mt, ok := tool.(tools.ContextualTool); ok {
+				mt.SetContext(msg.Channel, msg.ChatID)
+			}
+		}
 	}
 
 	// Check for commands
@@ -617,27 +637,56 @@ func (al *AgentLoop) runAgentLoop(
 	// 3. Save user message to session
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
+	// Create a cancellable context for LLM iteration loop.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Register our cancel handle. If another request is already in flight for this
+	// session (e.g. a previous message that hasn't finished), cancel it now so only
+	// one request runs per session at a time. This also ensures /reset (which calls
+	// LoadAndDelete) always finds the most current handle.
+	handle := &cancelHandle{cancel}
+	if prev, loaded := al.activeSessions.Swap(opts.SessionKey, handle); loaded {
+		prev.(*cancelHandle).cancel()
+	}
+	// Only remove the key if it still points to our handle (a later goroutine may
+	// have already replaced it).
+	defer al.activeSessions.CompareAndDelete(opts.SessionKey, handle)
+
 	// 4. Run LLM iteration loop
-	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
+	finalContent, iteration, err := al.runLLMIteration(runCtx, agent, messages, opts)
 	if err != nil {
+		// If the error is due to context cancellation from /reset, return a friendly message.
+		if errors.Is(err, context.Canceled) {
+			return "Request interrupted by /reset.", nil
+		}
 		return "", err
 	}
 
-	// If last tool had ForUser content and we already sent it, we might not need to send final response
-	// This is controlled by the tool's Silent flag and ForUser content
-
-	// 5. Handle empty response
+	// Determine if we should use the default response.
+	// We only use it if NO content was produced AND no message tool was used in the loop.
 	if finalContent == "" {
-		finalContent = opts.DefaultResponse
+		messageToolUsed := false
+		if tool, ok := agent.Tools.Get("message"); ok {
+			if mt, ok := tool.(*tools.MessageTool); ok {
+				messageToolUsed = mt.HasSentInRound()
+			}
+		}
+
+		if !messageToolUsed {
+			finalContent = opts.DefaultResponse
+		}
 	}
 
 	// 6. Save final assistant message to session
-	agent.Sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
-	agent.Sessions.Save(opts.SessionKey)
+	if finalContent != "" {
+		agent.Sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
+		agent.Sessions.Save(opts.SessionKey)
+	}
 
 	// 7. Optional: summarization
 	if opts.EnableSummary {
-		al.maybeSummarize(agent, opts.SessionKey, opts.Channel, opts.ChatID)
+		al.maybeSummarize(runCtx, agent, opts.SessionKey, opts.Channel, opts.ChatID)
 	}
 
 	// 8. Optional: send response via bus
@@ -813,6 +862,11 @@ func (al *AgentLoop) runLLMIteration(
 				break
 			}
 
+			// If error is context cancellation, return immediately
+			if errors.Is(err, context.Canceled) {
+				return "", iteration, err
+			}
+
 			errMsg := strings.ToLower(err.Error())
 
 			// Check if this is a network/HTTP timeout — not a context window error.
@@ -840,8 +894,14 @@ func (al *AgentLoop) runLLMIteration(
 					"retry":   retry,
 					"backoff": backoff.String(),
 				})
-				time.Sleep(backoff)
-				continue
+				
+				// Select to handle context cancellation during backoff
+				select {
+				case <-ctx.Done():
+					return "", iteration, ctx.Err()
+				case <-time.After(backoff):
+					continue
+				}
 			}
 
 			if isContextError && retry < maxRetries {
@@ -937,6 +997,13 @@ func (al *AgentLoop) runLLMIteration(
 			Content:          response.Content,
 			ReasoningContent: response.ReasoningContent,
 		}
+
+		// Refine assistant message content for next iteration to save tokens
+		// if it contains tool calls (the original content is already saved in session)
+		if len(normalizedToolCalls) > 0 {
+			assistantMsg.Content = ""
+		}
+
 		for _, tc := range normalizedToolCalls {
 			argumentsJSON, _ := json.Marshal(tc.Arguments)
 			// Copy ExtraContent to ensure thought_signature is persisted for Gemini 3
@@ -966,6 +1033,11 @@ func (al *AgentLoop) runLLMIteration(
 
 		// Execute tool calls
 		for _, tc := range normalizedToolCalls {
+			// Check context before each tool execution
+			if err := ctx.Err(); err != nil {
+				return "", iteration, err
+			}
+
 			argsJSON, _ := json.Marshal(tc.Arguments)
 			argsPreview := utils.Truncate(string(argsJSON), 200)
 			logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
@@ -1042,6 +1114,11 @@ func (al *AgentLoop) runLLMIteration(
 				contentForLLM = toolResult.Err.Error()
 			}
 
+			// Refine tool output for LLM to save tokens
+			if toolResult.Err == nil && tc.Name == "message" {
+				contentForLLM = "{\"status\":\"success\"}"
+			}
+
 			toolResultMsg := providers.Message{
 				Role:       "tool",
 				Content:    contentForLLM,
@@ -1051,6 +1128,22 @@ func (al *AgentLoop) runLLMIteration(
 
 			// Save tool result message to session
 			agent.Sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
+		}
+
+		// If all tool calls in this iteration were 'message' calls, we can stop early.
+		// The message tool has already delivered the content to the user, and a follow-up
+		// LLM iteration would only produce redundant "Message sent" or "Success" text.
+		allMessageTools := true
+		for _, tc := range normalizedToolCalls {
+			if tc.Name != "message" {
+				allMessageTools = false
+				break
+			}
+		}
+		if allMessageTools && iteration > 0 {
+			logger.DebugCF("agent", "All tools were message tools, ending iteration early",
+				map[string]any{"iteration": iteration, "agent_id": agent.ID})
+			break
 		}
 	}
 
@@ -1078,7 +1171,7 @@ func (al *AgentLoop) updateToolContexts(agent *AgentInstance, channel, chatID st
 }
 
 // maybeSummarize triggers summarization if the session history exceeds thresholds.
-func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, chatID string) {
+func (al *AgentLoop) maybeSummarize(ctx context.Context, agent *AgentInstance, sessionKey, channel, chatID string) {
 	newHistory := agent.Sessions.GetHistory(sessionKey)
 	tokenEstimate := al.estimateTokens(newHistory)
 	threshold := agent.ContextWindow * 75 / 100
@@ -1089,7 +1182,7 @@ func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, c
 			go func() {
 				defer al.summarizing.Delete(summarizeKey)
 				logger.Debug("Memory threshold reached. Optimizing conversation history...")
-				al.summarizeSession(agent, sessionKey)
+				al.summarizeSession(ctx, agent, sessionKey)
 			}()
 		}
 	}
@@ -1236,8 +1329,8 @@ func formatToolsForLog(toolDefs []providers.ToolDefinition) string {
 }
 
 // summarizeSession summarizes the conversation history for a session.
-func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+func (al *AgentLoop) summarizeSession(parentCtx context.Context, agent *AgentInstance, sessionKey string) {
+	ctx, cancel := context.WithTimeout(parentCtx, 120*time.Second)
 	defer cancel()
 
 	history := agent.Sessions.GetHistory(sessionKey)
@@ -1381,6 +1474,7 @@ func (al *AgentLoop) handleCommand(ctx context.Context, msg bus.InboundMessage) 
 
 	cmd := parts[0]
 	args := parts[1:]
+	sessionKey := msg.SessionKey
 
 	switch cmd {
 	case "/show":
@@ -1453,6 +1547,42 @@ func (al *AgentLoop) handleCommand(ctx context.Context, msg bus.InboundMessage) 
 		default:
 			return fmt.Sprintf("Unknown switch target: %s", target), true
 		}
+
+	case "/reset", "/clear":
+		// If sessionKey is missing from msg, try to resolve it via routing
+		if sessionKey == "" {
+			route := al.registry.ResolveRoute(routing.RouteInput{
+				Channel:    msg.Channel,
+				AccountID:  msg.Metadata["account_id"],
+				Peer:       extractPeer(msg),
+				ParentPeer: extractParentPeer(msg),
+				GuildID:    msg.Metadata["guild_id"],
+				TeamID:     msg.Metadata["team_id"],
+			})
+			sessionKey = route.SessionKey
+		}
+
+		defaultAgent := al.registry.GetDefaultAgent()
+		if defaultAgent == nil {
+			return "Error: no agent available to clear history", true
+		}
+
+		if sessionKey == "" {
+			return "Error: no active session to reset", true
+		}
+
+		// Cancel any ongoing LLM requests for this session
+		if raw, loaded := al.activeSessions.LoadAndDelete(sessionKey); loaded {
+			raw.(*cancelHandle).cancel()
+			logger.InfoCF("agent", "Cancelled ongoing LLM requests due to /reset",
+				map[string]any{"session_key": sessionKey})
+		}
+
+		defaultAgent.Sessions.TruncateHistory(sessionKey, 0)
+		defaultAgent.Sessions.SetSummary(sessionKey, "")
+		_ = defaultAgent.Sessions.Save(sessionKey)
+		return "Session history cleared and reset.", true
+
 	}
 
 	return "", false
