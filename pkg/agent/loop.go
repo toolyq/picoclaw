@@ -752,7 +752,7 @@ func (al *AgentLoop) runLLMIteration(
 			map[string]any{
 				"iteration":     iteration,
 				"messages_json": formatMessagesForLog(messages),
-				"tools_json":    formatToolsForLog(providerToolDefs),
+				// "tools_json":    formatToolsForLog(providerToolDefs),
 			})
 
 		// Call LLM with fallback chain if candidates are configured.
