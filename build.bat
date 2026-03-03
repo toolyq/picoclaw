@@ -28,6 +28,7 @@ go build -ldflags "-s -w" -o picoclaw.exe ./cmd/picoclaw
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Failed to build PicoClaw.
     set BUILD_STATUS=%ERRORLEVEL%
+    exit /b 1
 )
 
 echo [INFO] Building PicoClaw Launcher...
