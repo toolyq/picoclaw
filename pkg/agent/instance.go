@@ -12,6 +12,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/session"
+	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
@@ -97,6 +98,14 @@ func NewAgentInstance(
 	sessionsManager := session.NewSessionManager(sessionsDir)
 
 	contextBuilder := NewContextBuilder(workspace)
+
+	// Register list_builtin_skills tool to allow LLM to query available skills
+	// without having them all in the system prompt
+	wd, _ := os.Getwd()
+	builtinSkillsDir := filepath.Join(wd, "skills")
+	globalSkillsDir := filepath.Join(getGlobalConfigDir(), "skills")
+	skillsLoader := skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir)
+	toolsRegistry.Register(tools.NewListBuiltinSkillsTool(skillsLoader))
 
 	agentID := routing.DefaultAgentID
 	agentName := ""
