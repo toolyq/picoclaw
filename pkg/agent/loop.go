@@ -582,11 +582,15 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 
 	route, agent, routeErr := al.resolveMessageRoute(msg)
 
+	// Resolve session key from route, while preserving explicit agent-scoped keys.
+	scopeKey := resolveScopeKey(route, msg.SessionKey)
+	sessionKey := scopeKey
+
 	// Commands are checked before requiring a successful route.
 	// Global commands (/help, /show, /switch) work even when routing fails;
 	// context-dependent commands check their own Runtime fields and report
 	// "unavailable" when the required capability is nil.
-	if response, handled := al.handleCommand(ctx, msg, agent); handled {
+	if response, handled := al.handleCommand(ctx, msg, agent, sessionKey); handled {
 		return response, nil
 	}
 
@@ -600,10 +604,6 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			resetter.ResetSentInRound()
 		}
 	}
-
-	// Resolve session key from route, while preserving explicit agent-scoped keys.
-	scopeKey := resolveScopeKey(route, msg.SessionKey)
-	sessionKey := scopeKey
 
 	logger.InfoCF("agent", "Routed message",
 		map[string]any{
@@ -1593,6 +1593,7 @@ func (al *AgentLoop) handleCommand(
 	ctx context.Context,
 	msg bus.InboundMessage,
 	agent *AgentInstance,
+	sessionKey string,
 ) (string, bool) {
 	if !commands.HasCommandPrefix(msg.Content) {
 		return "", false
@@ -1602,7 +1603,7 @@ func (al *AgentLoop) handleCommand(
 		return "", false
 	}
 
-	rt := al.buildCommandsRuntime(agent)
+	rt := al.buildCommandsRuntime(agent, sessionKey)
 	executor := commands.NewExecutor(al.cmdRegistry, rt)
 
 	var commandReply string
@@ -1631,7 +1632,7 @@ func (al *AgentLoop) handleCommand(
 	}
 }
 
-func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance) *commands.Runtime {
+func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, sessionKey string) *commands.Runtime {
 	rt := &commands.Runtime{
 		Config:          al.cfg,
 		ListAgentIDs:    al.registry.ListAgentIDs,
@@ -1660,6 +1661,13 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance) *commands.Runtim
 			oldModel := agent.Model
 			agent.Model = value
 			return oldModel, nil
+		}
+		rt.ClearSession = func() error {
+			if agent.Sessions != nil {
+				agent.Sessions.Clear(sessionKey)
+				return agent.Sessions.Save(sessionKey)
+			}
+			return fmt.Errorf("session manager not initialized")
 		}
 	}
 	return rt
