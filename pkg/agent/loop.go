@@ -549,11 +549,6 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		return al.processSystemMessage(ctx, msg)
 	}
 
-	// Check for commands
-	if response, handled := al.handleCommand(ctx, msg); handled {
-		return response, nil
-	}
-
 	// Route to determine agent and session key
 	route := al.registry.ResolveRoute(routing.RouteInput{
 		Channel:    msg.Channel,
@@ -572,17 +567,22 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		return "", fmt.Errorf("no agent available for route (agent_id=%s)", route.AgentID)
 	}
 
+	// Use routed session key, but honor pre-set agent-scoped keys (for ProcessDirect/cron)
+	sessionKey := route.SessionKey
+	if msg.SessionKey != "" && strings.HasPrefix(msg.SessionKey, "agent:") {
+		sessionKey = msg.SessionKey
+	}
+
+	// Check for commands
+	if response, handled := al.handleCommand(ctx, msg, agent, sessionKey); handled {
+		return response, nil
+	}
+
 	// Reset message-tool state for this round so we don't skip publishing due to a previous round.
 	if tool, ok := agent.Tools.Get("message"); ok {
 		if resetter, ok := tool.(interface{ ResetSentInRound() }); ok {
 			resetter.ResetSentInRound()
 		}
-	}
-
-	// Use routed session key, but honor pre-set agent-scoped keys (for ProcessDirect/cron)
-	sessionKey := route.SessionKey
-	if msg.SessionKey != "" && strings.HasPrefix(msg.SessionKey, "agent:") {
-		sessionKey = msg.SessionKey
 	}
 
 	logger.InfoCF("agent", "Routed message",
@@ -1460,7 +1460,7 @@ func (al *AgentLoop) estimateTokens(messages []providers.Message) int {
 	return totalChars * 2 / 5
 }
 
-func (al *AgentLoop) handleCommand(ctx context.Context, msg bus.InboundMessage) (string, bool) {
+func (al *AgentLoop) handleCommand(ctx context.Context, msg bus.InboundMessage, agent *AgentInstance, sessionKey string) (string, bool) {
 	content := strings.TrimSpace(msg.Content)
 	if !strings.HasPrefix(content, "/") {
 		return "", false
@@ -1494,6 +1494,16 @@ func (al *AgentLoop) handleCommand(ctx context.Context, msg bus.InboundMessage) 
 		default:
 			return fmt.Sprintf("Unknown show target: %s", args[0]), true
 		}
+
+	case "/reset":
+		if agent == nil || agent.Sessions == nil {
+			return "Session manager not available", true
+		}
+		agent.Sessions.Clear(sessionKey)
+		if err := agent.Sessions.Save(sessionKey); err != nil {
+			logger.WarnCF("agent", "Failed to save session after clear", map[string]any{"error": err})
+		}
+		return "Session cleared", true
 
 	case "/list":
 		if len(args) < 1 {

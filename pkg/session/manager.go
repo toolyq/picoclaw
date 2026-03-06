@@ -145,6 +145,19 @@ func (sm *SessionManager) TruncateHistory(key string, keepLast int) {
 	session.Updated = time.Now()
 }
 
+// Clear removes all messages and summary from a session, effectively resetting it.
+func (sm *SessionManager) Clear(key string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	session, ok := sm.sessions[key]
+	if ok {
+		session.Messages = []providers.Message{}
+		session.Summary = ""
+		session.Updated = time.Now()
+	}
+}
+
 // sanitizeFilename converts a session key into a cross-platform safe filename.
 // Session keys use "channel:chatID" (e.g. "telegram:123456") but ':' is the
 // volume separator on Windows, so filepath.Base would misinterpret the key.
