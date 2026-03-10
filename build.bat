@@ -30,13 +30,6 @@ if %ERRORLEVEL% NEQ 0 (
     set BUILD_STATUS=%ERRORLEVEL%
 )
 
-echo [INFO] Building PicoClaw Launcher...
-go build -ldflags "-s -w" -o picoclaw-launcher.exe ./cmd/picoclaw-launcher
-if %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Failed to build PicoClaw Launcher.
-    set BUILD_STATUS=%ERRORLEVEL%
-)
-
 echo [INFO] Building PicoClaw Launcher TUI...
 go build -ldflags "-s -w" -o picoclaw-launcher-tui.exe ./cmd/picoclaw-launcher-tui
 if %ERRORLEVEL% NEQ 0 (
@@ -44,11 +37,17 @@ if %ERRORLEVEL% NEQ 0 (
     set BUILD_STATUS=%ERRORLEVEL%
 )
 
+echo [INFO] Building PicoClaw Web...
+call build-web.bat
+if %ERRORLEVEL% NEQ 0 (
+    set BUILD_STATUS=%ERRORLEVEL%
+)
+
 echo [INFO] Cleaning up staged workspace...
 if exist "cmd\picoclaw\internal\onboard\workspace" rmdir /s /q "cmd\picoclaw\internal\onboard\workspace"
 
 if %BUILD_STATUS% EQU 0 (
-    echo [SUCCESS] Build successful! Output: picoclaw.exe
+    echo [SUCCESS] Build successful! Output: picoclaw.exe, picoclaw-launcher-tui.exe, picoclaw-web.exe
 ) else (
     echo [ERROR] Build failed!
     exit /b %BUILD_STATUS%
