@@ -105,6 +105,10 @@ func NewAgentInstance(
 		mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseRegex,
 	)
 
+	if cfg.Tools.IsToolEnabled("search_tools_and_skills") {
+		toolsRegistry.Register(tools.NewSearchAllTool(toolsRegistry, contextBuilder.skillsLoader))
+	}
+
 	agentID := routing.DefaultAgentID
 	agentName := ""
 	var subagents *config.SubagentsConfig
