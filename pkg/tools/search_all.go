@@ -109,6 +109,6 @@ func (t *SearchAllTool) Execute(ctx context.Context, args map[string]any) *ToolR
 		return NewToolResult("No matching tools or skills found.")
 	}
 
-	foundMsg := fmt.Sprintf("Found %d matching tools/skills. These tools have been unlocked and are now ready for use in your next turn.\n\n%s", len(results), strings.Join(results, "\n"))
+	foundMsg := fmt.Sprintf("Found %d matching tools/skills.\n\n%s", len(results), strings.Join(results, "\n"))
 	return NewToolResult(foundMsg)
 }
