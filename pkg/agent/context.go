@@ -94,22 +94,7 @@ func (cb *ContextBuilder) getIdentity() string {
 }
 
 func (cb *ContextBuilder) getDiscoveryRule() string {
-	if !cb.toolDiscoveryBM25 && !cb.toolDiscoveryRegex {
-		return ""
-	}
-
-	var toolNames []string
-	if cb.toolDiscoveryBM25 {
-		toolNames = append(toolNames, `"tool_search_tool_bm25"`)
-	}
-	if cb.toolDiscoveryRegex {
-		toolNames = append(toolNames, `"tool_search_tool_regex"`)
-	}
-
-	return fmt.Sprintf(
-		`5. **Tool Discovery** - Your visible tools are limited to save memory, but a vast hidden library exists. If you lack the right tool for a task, BEFORE giving up, you MUST search using the %s tool. Do not refuse a request unless the search returns nothing. Found tools will temporarily unlock for your next turn.`,
-		strings.Join(toolNames, " or "),
-	)
+	return `**Tool Discovery** - use "search_tools_and_skills" tool to search tools and skills.`
 }
 
 func (cb *ContextBuilder) BuildSystemPrompt() string {

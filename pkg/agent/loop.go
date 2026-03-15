@@ -1017,7 +1017,7 @@ func (al *AgentLoop) runLLMIteration(
 			})
 
 		// Build tool definitions
-		providerToolDefs := agent.Tools.ToProviderDefs()
+		providerToolDefs := al.getVisibleTools(agent, opts.ChatID)
 
 		// Log LLM request details
 		logger.DebugCF("agent", "LLM request",
@@ -1437,6 +1437,37 @@ func (al *AgentLoop) selectCandidates(
 			"threshold":   agent.Router.Threshold(),
 		})
 	return agent.LightCandidates, agent.Router.LightModel()
+}
+
+func (al *AgentLoop) getVisibleTools(agent *AgentInstance, chatID string) []providers.ToolDefinition {
+	if chatID == "" {
+		chatID = "default"
+	}
+	allDefs := agent.Tools.ToProviderDefs()
+
+	// Find the SearchAllTool in the registry
+	var searchTool interface {
+		IsVisible(chatID, toolName string) bool
+	}
+	if t, ok := agent.Tools.Get("search_tools_and_skills"); ok {
+		if st, ok := t.(interface {
+			IsVisible(chatID, toolName string) bool
+		}); ok {
+			searchTool = st
+		}
+	}
+
+	if searchTool == nil {
+		return allDefs
+	}
+
+	visible := []providers.ToolDefinition{}
+	for _, def := range allDefs {
+		if searchTool.IsVisible(chatID, def.Function.Name) {
+			visible = append(visible, def)
+		}
+	}
+	return visible
 }
 
 // maybeSummarize triggers summarization if the session history exceeds thresholds.
