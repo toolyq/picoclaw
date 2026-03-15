@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers/common"
 	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
 )
@@ -107,6 +108,13 @@ func (p *Provider) Chat(
 		requestBody["tools"] = tools
 		requestBody["tool_choice"] = "auto"
 	}
+
+	// Log the complete request for debugging
+	logger.InfoCF("openai_compat", "LLM Request", map[string]any{
+		"model":    model,
+		"messages": requestBody["messages"],
+		"tools":    requestBody["tools"],
+	})
 
 	if maxTokens, ok := common.AsInt(options["max_tokens"]); ok {
 		// Use configured maxTokensField if specified, otherwise fallback to model-based detection
