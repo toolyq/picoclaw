@@ -35,6 +35,7 @@ go build -ldflags "-s -w" -o picoclaw-launcher-tui.exe ./cmd/picoclaw-launcher-t
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Failed to build PicoClaw Launcher TUI.
     set BUILD_STATUS=%ERRORLEVEL%
+    exit /b 1
 )
 
 echo [INFO] Building PicoClaw Web...
