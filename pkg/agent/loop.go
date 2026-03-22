@@ -48,6 +48,7 @@ type AgentLoop struct {
 	transcriber    voice.Transcriber
 	cmdRegistry    *commands.Registry
 	mcp            mcpRuntime
+	pendingSkills  sync.Map
 	mu             sync.RWMutex
 	reloadFunc     func() error
 	// Track active requests for safe provider cleanup
@@ -62,6 +63,7 @@ type processOptions struct {
 	SenderID          string   // Current sender ID for dynamic context
 	SenderDisplayName string   // Current sender display name for dynamic context
 	UserMessage       string   // User message content (may include prefix)
+	ForcedSkills      []string // Skills explicitly requested for this message
 	Media             []string // media:// refs from inbound message
 	DefaultResponse   string   // Response when LLM returns empty
 	EnableSummary     bool     // Whether to trigger summarization
@@ -782,6 +784,15 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		return response, nil
 	}
 
+	if pending := al.takePendingSkills(opts.SessionKey); len(pending) > 0 {
+		opts.ForcedSkills = append(opts.ForcedSkills, pending...)
+		logger.InfoCF("agent", "Applying pending skill override",
+			map[string]any{
+				"session_key": opts.SessionKey,
+				"skills":      strings.Join(pending, ","),
+			})
+	}
+
 	return al.runAgentLoop(ctx, agent, opts)
 }
 
@@ -915,6 +926,7 @@ func (al *AgentLoop) runAgentLoop(
 		opts.ChatID,
 		opts.SenderID,
 		opts.SenderDisplayName,
+		activeSkillNames(agent, opts)...,
 	)
 
 	// Resolve media:// refs: images→base64 data URLs, non-images→local paths in content
@@ -1226,6 +1238,7 @@ func (al *AgentLoop) runLLMIteration(
 				messages = agent.ContextBuilder.BuildMessages(
 					newHistory, newSummary, "",
 					nil, opts.Channel, opts.ChatID, opts.SenderID, opts.SenderDisplayName,
+					activeSkillNames(agent, opts)...,
 				)
 				continue
 			}
@@ -1942,6 +1955,10 @@ func (al *AgentLoop) handleCommand(
 		return "", false
 	}
 
+	if matched, handled, reply := al.applyExplicitSkillCommand(msg.Content, agent, opts); matched {
+		return reply, handled
+	}
+
 	if al.cmdRegistry == nil {
 		return "", false
 	}
@@ -1997,6 +2014,9 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			}
 			return nil
 		},
+	}
+	if agent != nil && agent.ContextBuilder != nil {
+		rt.ListSkillNames = agent.ContextBuilder.ListSkillNames
 	}
 	rt.ReloadConfig = func() error {
 		if al.reloadFunc == nil {
@@ -2055,6 +2075,146 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		}
 	}
 	return rt
+}
+
+func activeSkillNames(agent *AgentInstance, opts processOptions) []string {
+	var out []string
+	seen := make(map[string]struct{})
+
+	appendNames := func(names []string) {
+		for _, name := range names {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, name)
+		}
+	}
+
+	if agent != nil {
+		appendNames(agent.SkillsFilter)
+	}
+	appendNames(opts.ForcedSkills)
+
+	return out
+}
+
+func (al *AgentLoop) applyExplicitSkillCommand(
+	raw string,
+	agent *AgentInstance,
+	opts *processOptions,
+) (matched bool, handled bool, reply string) {
+	commandName, ok := commands.CommandName(raw)
+	if !ok || commandName != "use" {
+		return false, false, ""
+	}
+
+	if agent == nil || agent.ContextBuilder == nil {
+		return true, true, commandsUnavailableSkillMessage()
+	}
+
+	fields := strings.Fields(strings.TrimSpace(raw))
+	if len(fields) < 2 {
+		return true, true, buildUseCommandHelp(agent)
+	}
+
+	if strings.EqualFold(fields[1], "clear") || strings.EqualFold(fields[1], "off") {
+		al.clearPendingSkills(opts.SessionKey)
+		return true, true, "Cleared pending skill override."
+	}
+
+	canonicalSkill, ok := agent.ContextBuilder.ResolveSkillName(fields[1])
+	if !ok {
+		return true, true, fmt.Sprintf("Unknown skill: %s\nUse /list skills to see installed skills.", fields[1])
+	}
+
+	if len(fields) == 2 {
+		al.setPendingSkills(opts.SessionKey, []string{canonicalSkill})
+		return true, true, fmt.Sprintf(
+			"Skill %q is armed for your next message.\nSend your next request normally, or use /use clear to cancel.",
+			canonicalSkill,
+		)
+	}
+
+	message := strings.TrimSpace(strings.Join(fields[2:], " "))
+	if message == "" {
+		return true, true, buildUseCommandHelp(agent)
+	}
+
+	opts.UserMessage = message
+	opts.ForcedSkills = append(opts.ForcedSkills, canonicalSkill)
+	return true, false, ""
+}
+
+func commandsUnavailableSkillMessage() string {
+	return "Skill selection is unavailable in the current context."
+}
+
+func buildUseCommandHelp(agent *AgentInstance) string {
+	if agent == nil || agent.ContextBuilder == nil {
+		return "Usage: /use <skill> [message]"
+	}
+
+	names := agent.ContextBuilder.ListSkillNames()
+	if len(names) == 0 {
+		return "Usage: /use <skill> [message]\nNo installed skills found."
+	}
+
+	return fmt.Sprintf(
+		"Usage: /use <skill> [message]\n\nInstalled Skills:\n- %s\n\nUse /use <skill> to apply a skill to your next message, or /use <skill> <message> to force it immediately.",
+		strings.Join(names, "\n- "),
+	)
+}
+
+func (al *AgentLoop) setPendingSkills(sessionKey string, skillNames []string) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" || len(skillNames) == 0 {
+		return
+	}
+
+	filtered := make([]string, 0, len(skillNames))
+	for _, name := range skillNames {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			filtered = append(filtered, name)
+		}
+	}
+	if len(filtered) == 0 {
+		return
+	}
+
+	al.pendingSkills.Store(sessionKey, filtered)
+}
+
+func (al *AgentLoop) takePendingSkills(sessionKey string) []string {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return nil
+	}
+
+	value, ok := al.pendingSkills.LoadAndDelete(sessionKey)
+	if !ok {
+		return nil
+	}
+
+	skills, ok := value.([]string)
+	if !ok {
+		return nil
+	}
+
+	return append([]string(nil), skills...)
+}
+
+func (al *AgentLoop) clearPendingSkills(sessionKey string) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return
+	}
+	al.pendingSkills.Delete(sessionKey)
 }
 
 func mapCommandError(result commands.ExecuteResult) string {
