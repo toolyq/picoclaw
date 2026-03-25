@@ -1,7 +1,15 @@
 ---
 name: fetch-x-twitter
-description: "Fetch or Get posts from X.com (Twitter) with nodejs"
-instructions: Execute the script wiht nodejs ```node "D:\s\picoclaw\.picoclaw\workspace\skills\fetch-x-twitter\scripts\fetch-x-twitter.js" [n]```
+description: "Fetch or Get posts from X.com (Twitter)"
+instructions: |
+  Execute the script with Python:
+  ```powershell
+  python "D:\s\picoclaw\.picoclaw\workspace\skills\fetch-x-twitter\scripts\fetch-x-twitter.py" [n]
+  ```
+  Or with Node.js:
+  ```powershell
+  node "D:\s\picoclaw\.picoclaw\workspace\skills\fetch-x-twitter\scripts\fetch-x-twitter.js" [n]
+  ```
 ---
 
 # fetch-x-twitter Skill
@@ -10,9 +18,11 @@ Fetch the first `n` posts from X.com (Twitter) homepage with author, UTC timesta
 
 ## Steps for Agent
 
-1. **Execute Script**: Run the Node.js script:
+1. **Execute Script**: Run the Node.js or Python script:
    ```powershell
-   node "D:\s\picoclaw\.picoclaw\workspace\skills\fetch-x-twitter\scripts\fetch-x-twitter.js" [n]
+   python "D:\s\picoclaw\.picoclaw\workspace\skills\fetch-x-twitter\scripts\fetch-x-twitter.js" [n]
+   # Or
+   node "D:\s\picoclaw\.picoclaw\workspace\skills\fetch-x-twitter\scripts\fetch-x-twitter.py" [n]
    ```
    *(Default `n` is 3)*
 
@@ -30,7 +40,8 @@ Fetch the first `n` posts from X.com (Twitter) homepage with author, UTC timesta
    - Task is COMPLETE
 
 ## Important Notes
-- **Login**: Requires valid login session in `D:\s\picoclaw\.picoclaw\workspace\ai_chrome_data`
+- **Browser**: Requires a running browser with remote debugging enabled on port 9222 (e.g., `chrome.exe --remote-debugging-port=9222`).
+- **Login**: Ensure you are already logged in to X (Twitter) in the browser instance before running.
 
 ## Example
 "获取 X 首页最近 5 条动态" → Execute → Extract data → Call message tool → Return empty → Done

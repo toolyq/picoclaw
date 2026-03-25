@@ -6,32 +6,17 @@ const { chromium } = require('playwright');
  * @returns {Promise<Array<Object>>} Array of tweet objects with author, time, and content
  */
 async function fetchXTweets(n = 3) {
-  // Launch browser with persistent context to maintain login state
-  const context = await chromium.launchPersistentContext(
-    "D:\\s\\picoclaw\\.picoclaw\\workspace\\ai_chrome_data",
-    {
-      executablePath: "D:\\s\\picoclaw\\.picoclaw\\workspace\\ChromePortable\\chrome.exe",
-      headless: true,
-      args: [
-        '--disable-gpu',
-        '--no-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-extensions',
-        '--window-size=1920,1080'
-      ],
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      viewport: { width: 1920, height: 1080 }
-    }
-  );
-
-  const page = await context.newPage();
-
-  // Speed up: Block unnecessary resources
-  await page.route('**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,otf,ttf,eot}', route => route.abort());
-  await page.route(/.*(analytics|telemetry|metrics|ads).*/, route => route.abort());
-
+  let browser, page;
   try {
+    // Connect to existing browser via CDP on port 9222
+    browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+    const context = browser.contexts()[0] || await browser.newContext();
+    page = await context.newPage();
+
+    // Speed up: Block unnecessary resources
+    await page.route('**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,otf,ttf,eot}', route => route.abort());
+    await page.route(/.*(analytics|telemetry|metrics|ads).*/, route => route.abort());
+
     // Navigate with retry logic
     let attempts = 0;
     const maxAttempts = 2;
@@ -104,27 +89,37 @@ async function fetchXTweets(n = 3) {
 
         // First, expand all collapsed content in each tweet
         for (const tweetEl of tweetElements) {
-          // Look for expand buttons within this tweet
-          const expandSelectors = [
-            'span',
-            'div',
-            '[role="button"]'
-          ];
           let expanded = false;
-          for (const selector of expandSelectors) {
-            const els = tweetEl.querySelectorAll(selector);
-            for (const el of els) {
-              const txt = el.innerText || el.textContent || '';
-              if (txt && (txt.includes('显示更多') || txt.includes('展开更多') || txt.includes('查看更多') || txt.includes('Show more'))) {
-                try {
-                  el.click();
-                  expanded = true;
-                } catch (e) {
-                  // ignore
-                }
-              }
+
+          // Only look for expand buttons inside the tweet text container,
+          // and EXCLUDE <a> tags to avoid page navigation.
+          // X.com uses [role="button"] spans for "Show more" inside tweetText.
+          const tweetTextEl = tweetEl.querySelector('[data-testid="tweetText"]');
+          const searchRoot = tweetTextEl ? tweetTextEl.parentElement : tweetEl;
+
+          const candidates = searchRoot.querySelectorAll('[role="button"], span, div');
+          for (const el of candidates) {
+            // Skip any element that is an anchor or contains an anchor (navigation risk)
+            if (el.tagName === 'A' || el.closest('a')) continue;
+            // Skip if element itself has an href-like behavior
+            if (el.getAttribute('href') || el.getAttribute('data-href')) continue;
+
+            // Only match elements whose direct text (trimmed) is exactly the expand phrase
+            const txt = (el.innerText || el.textContent || '').trim();
+            const isExpandText = txt === '显示更多' || txt === '展开更多' || txt === '查看更多' || txt === 'Show more';
+            if (!isExpandText) continue;
+
+            try {
+              // Use dispatchEvent instead of .click() to avoid triggering
+              // any default browser navigation on anchor-like elements
+              el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+              expanded = true;
+              break; // Only expand once per tweet
+            } catch (e) {
+              // ignore
             }
           }
+
           // If we expanded, wait a bit for content to load
           if (expanded) {
             await new Promise(r => setTimeout(r, 300));
@@ -222,7 +217,8 @@ async function fetchXTweets(n = 3) {
 
     return tweets;
   } finally {
-    await context.close();
+    if (typeof page !== 'undefined') await page.close();
+    if (typeof browser !== 'undefined') await browser.close();
   }
 }
 
