@@ -1784,10 +1784,10 @@ turnLoop:
 				"iteration": iteration,
 				"max":       ts.agent.MaxIterations,
 			})
-		al.saveLLMRequestToFile(agent.ID, iteration, messages, providerToolDefs)
 
 		gracefulTerminal, _ := ts.gracefulInterruptRequested()
 		providerToolDefs := ts.agent.Tools.ToProviderDefs()
+		al.saveLLMRequestToFile(ts.agent.ID, iteration, messages, providerToolDefs)
 
 		// Native web search support (from HEAD)
 		_, hasWebSearch := ts.agent.Tools.Get("web_search")
