@@ -2,6 +2,9 @@ import asyncio
 import json
 import sys
 import random
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 from playwright.async_api import async_playwright
 
 async def fetch_x_tweets(n=3):
