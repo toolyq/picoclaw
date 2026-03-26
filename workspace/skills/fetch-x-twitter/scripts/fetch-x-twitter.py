@@ -157,7 +157,6 @@ async def fetch_x_tweets(n=3, channel_id="", chat_id=""):
                         formatted_tweet += f"Content:\n{tweet['content']}\n"
                         
                         # Print immediately (LLM will still see this, but it's okay)
-                        print(formatted_tweet)
                         
                         webhook_url = os.environ.get("PICOCLAW_WEBHOOK_URL")
                         if webhook_url and channel_id and chat_id:
@@ -171,6 +170,8 @@ async def fetch_x_tweets(n=3, channel_id="", chat_id=""):
                                 urllib.request.urlopen(req)
                             except Exception as e:
                                 print(f"Webhook push failed: {e}", file=sys.stderr)
+                        else:
+                            print(formatted_tweet)
 
                 if len(tweets) < n:
                     # Scroll down
@@ -223,6 +224,8 @@ if __name__ == "__main__":
         results = asyncio.run(fetch_x_tweets(count, channel_id, chat_id))
         if not results:
             print("\n[WARNING] No tweets were found.\n")
+        else:
+            print(f"\nAll {len(results)} tweets have been sent to the user. \n")
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
