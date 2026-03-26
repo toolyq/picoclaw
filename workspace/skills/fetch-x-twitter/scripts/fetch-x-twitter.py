@@ -2,6 +2,9 @@ import asyncio
 import json
 import sys
 import random
+import urllib.request
+import urllib.parse
+import os
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -143,12 +146,28 @@ async def fetch_x_tweets(n=3):
                         seen_content.add(dedup_id)
                         tweets.append(tweet)
                         
-                        # Print immediately
-                        print(f"--- TWEET_{len(tweets)} ---")
-                        print(f"Author: {tweet['author']}")
-                        print(f"Time: {tweet['time']}")
-                        print(f"URL: {tweet['url']}")
-                        print(f"Content:\n{tweet['content']}\n")
+                        formatted_tweet = f"--- TWEET_{len(tweets)} ---\n"
+                        formatted_tweet += f"Author: {tweet['author']}\n"
+                        formatted_tweet += f"Time: {tweet['time']}\n"
+                        
+                        formatted_tweet += f"URL: {tweet['url']}\n"
+                        formatted_tweet += f"Content:\n{tweet['content']}\n"
+                        
+                        # Print immediately (LLM will still see this, but it's okay)
+                        print(formatted_tweet)
+                        
+                        webhook_url = os.environ.get("PICOCLAW_WEBHOOK_URL")
+                        if webhook_url and channel_id and chat_id:
+                            try:
+                                payload = json.dumps({
+                                    "channel": channel_id,
+                                    "chat_id": chat_id,
+                                    "content": formatted_tweet
+                                }).encode()
+                                req = urllib.request.Request(webhook_url, data=payload, headers={'Content-Type': 'application/json'})
+                                urllib.request.urlopen(req)
+                            except Exception as e:
+                                print(f"Webhook push failed: {e}", file=sys.stderr)
 
                 if len(tweets) < n:
                     # Scroll down
@@ -178,13 +197,24 @@ async def fetch_x_tweets(n=3):
 if __name__ == "__main__":
     count = 3
     is_json = False
+    channel_id = ""
+    chat_id = ""
     
-    if len(sys.argv) > 1:
-        for arg in sys.argv[1:]:
-            if arg == "--json":
-                is_json = True
-            elif arg.isdigit():
-                count = int(arg)
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--json":
+            is_json = True
+        elif arg == "--channel" and i+1 < len(args):
+            channel_id = args[i+1]
+            i += 1
+        elif arg == "--chat_id" and i+1 < len(args):
+            chat_id = args[i+1]
+            i += 1
+        elif arg.isdigit():
+            count = int(arg)
+        i += 1
 
     try:
         results = asyncio.run(fetch_x_tweets(count))
