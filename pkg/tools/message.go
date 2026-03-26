@@ -2,7 +2,11 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
+	"os"
 	"sync/atomic"
 )
 
@@ -14,7 +18,41 @@ type MessageTool struct {
 }
 
 func NewMessageTool() *MessageTool {
-	return &MessageTool{}
+	t := &MessageTool{}
+	t.startWebhookServer()
+	return t
+}
+
+func (t *MessageTool) startWebhookServer() {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	os.Setenv("PICOCLAW_WEBHOOK_URL", fmt.Sprintf("http://127.0.0.1:%d/message", port))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/message", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Channel string `json:"channel"`
+			ChatID  string `json:"chat_id"`
+			Content string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if t.sendCallback != nil {
+			t.sendCallback(payload.Channel, payload.ChatID, payload.Content)
+			t.sentInRound.Store(true)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	go http.Serve(listener, mux)
 }
 
 func (t *MessageTool) Name() string {
