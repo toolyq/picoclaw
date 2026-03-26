@@ -6,11 +6,14 @@ import urllib.request
 import urllib.parse
 import os
 
+# Suppress Node.js deprecation warnings from Playwright
+os.environ["NODE_NO_WARNINGS"] = "1"
+
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 from playwright.async_api import async_playwright
 
-async def fetch_x_tweets(n=3):
+async def fetch_x_tweets(n=3, channel_id="", chat_id=""):
     """
     Fetches the first n posts from X.com (Twitter) homepage using an existing browser via CDP.
     """
@@ -217,17 +220,11 @@ if __name__ == "__main__":
         i += 1
 
     try:
-        results = asyncio.run(fetch_x_tweets(count))
-        if is_json:
-            # We already printed tweets, so maybe just print the final JSON if requested
-            # but usually for this skill the individual prints are better.
-            # If --json is provided, we might want to suppress the intermediate prints?
-            # Let's keep it simple.
-            pass
-        elif not results:
+        results = asyncio.run(fetch_x_tweets(count, channel_id, chat_id))
+        if not results:
             print("\n[WARNING] No tweets were found.\n")
-        else:
-            print("\n[AGENT-INSTRUCTION-STOP-HERE]")
+
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
