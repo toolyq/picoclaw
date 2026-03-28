@@ -8,17 +8,13 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/sipeed/picoclaw/pkg"
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
 // GetPicoclawHome returns the picoclaw home directory.
-// Priority: $PICOCLAW_HOME > ~/.picoclaw
 func GetPicoclawHome() string {
-	if home := os.Getenv(config.EnvHome); home != "" {
-		return home
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".picoclaw")
+	return pkg.GetPicoClawHome(config.EnvHome)
 }
 
 // GetDefaultConfigPath returns the default path to the picoclaw config file.

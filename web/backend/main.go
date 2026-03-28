@@ -76,6 +76,7 @@ func main() {
 
 	// Initialize logger
 	picoHome := utils.GetPicoclawHome()
+	os.Setenv(config.EnvHome, picoHome)
 
 	f := filepath.Join(picoHome, logPath, panicFile)
 	panicFunc, err := logger.InitPanic(f)
@@ -248,14 +249,10 @@ func main() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-		// Main event loop - wait for signals or config changes
-		for {
-			select {
-			case <-sigChan:
-				logger.Info("Shutting down...")
-
-				return
-			}
+		// Main event loop - wait for signals
+		for range sigChan {
+			logger.Info("Shutting down...")
+			return
 		}
 	} else {
 		// GUI mode: start system tray

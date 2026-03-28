@@ -23,6 +23,7 @@ import (
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/skills"
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/status"
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/version"
+	"github.com/sipeed/picoclaw/pkg"
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
@@ -65,7 +66,12 @@ const (
 )
 
 func main() {
+	// Set the home directory environment variable based on local existence priority
+	home := pkg.GetPicoClawHome(config.EnvHome)
+	os.Setenv(config.EnvHome, home)
+
 	fmt.Printf("%s", banner)
+	fmt.Printf("Home: %s\n\n", home)
 	cmd := NewPicoclawCommand()
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)

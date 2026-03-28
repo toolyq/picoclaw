@@ -12,13 +12,8 @@ import (
 const Logo = pkg.Logo
 
 // GetPicoclawHome returns the picoclaw home directory.
-// Priority: $PICOCLAW_HOME > ~/.picoclaw
 func GetPicoclawHome() string {
-	if home := os.Getenv(config.EnvHome); home != "" {
-		return home
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, pkg.DefaultPicoClawHome)
+	return pkg.GetPicoClawHome(config.EnvHome)
 }
 
 func GetConfigPath() string {
