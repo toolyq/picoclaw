@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/commands"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
+	"github.com/sipeed/picoclaw/pkg/fileutil"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -1888,6 +1890,7 @@ turnLoop:
 
 		gracefulTerminal, _ := ts.gracefulInterruptRequested()
 		providerToolDefs := ts.agent.Tools.ToProviderDefs()
+		al.saveLLMRequestToFile(ts.agent.ID, iteration, messages, providerToolDefs)
 
 		// Native web search support (from HEAD)
 		_, hasWebSearch := ts.agent.Tools.Get("web_search")
@@ -3254,6 +3257,45 @@ func formatMessagesForLog(messages []providers.Message) string {
 	}
 	sb.WriteString("]")
 	return sb.String()
+}
+
+// saveLLMRequestToFile saves full LLM request details to a timestamped file for debugging
+func (al *AgentLoop) saveLLMRequestToFile(agentID string, iteration int, messages []providers.Message, toolDefs []providers.ToolDefinition) {
+	workspaceDir := "workspace"
+	// Try to get workspace from agent instance if possible
+	if agent, ok := al.registry.GetAgent(agentID); ok {
+		workspaceDir = agent.Workspace
+	}
+
+	logDir := filepath.Join(workspaceDir, "logs", "llm_requests")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		logger.WarnCF("agent", "Failed to create LLM request log directory", map[string]any{"error": err.Error()})
+		return
+	}
+
+	timestamp := time.Now().Format("20060102_150405_000")
+	filename := fmt.Sprintf("%s_%s_iter%d.json", timestamp, agentID, iteration)
+	filePath := filepath.Join(logDir, filename)
+
+	data := map[string]any{
+		"timestamp": time.Now().Format(time.RFC3339),
+		"agent_id":  agentID,
+		"iteration": iteration,
+		"messages":  messages,
+		"tools":     toolDefs,
+	}
+
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		logger.WarnCF("agent", "Failed to marshal LLM request for logging", map[string]any{"error": err.Error()})
+		return
+	}
+
+	if err := fileutil.WriteFileAtomic(filePath, jsonData, 0o644); err != nil {
+		logger.WarnCF("agent", "Failed to write LLM request to file", map[string]any{"path": filePath, "error": err.Error()})
+	} else {
+		logger.DebugCF("agent", "Saved full LLM request to file", map[string]any{"path": filePath})
+	}
 }
 
 // formatToolsForLog formats tool definitions for logging
