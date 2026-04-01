@@ -1,0 +1,66 @@
+name: build
+
+on:
+  push:
+    branches: [ "develop" ]
+  pull_request:
+    branches: [ "develop" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 必须赋予写入权限才能创建 Release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Stage workspace for embedding
+        run: |
+          rm -rf cmd/picoclaw/internal/onboard/workspace
+          mkdir -p cmd/picoclaw/internal/onboard/workspace
+          cp -r workspace/* cmd/picoclaw/internal/onboard/workspace/
+
+      - name: Build with GoReleaser (Snapshot)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: build --snapshot --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOVERSION: ${{ steps.setup-go.outputs.go-version }}
+
+      # 统一重命名文件，使用通配符匹配目录，防止因为架构版本后缀导致找不到文件
+      - name: Prepare Files
+        run: |
+          mkdir -p release_binaries
+          find dist/picoclaw_windows_amd64* -name "picoclaw.exe" -exec cp {} release_binaries/picoclaw-win64-${{ steps.date.outputs.date }}.exe \;
+          find dist/picoclaw_linux_arm64* -name "picoclaw" -exec cp {} release_binaries/picoclaw-linux-arm64-${{ steps.date.outputs.date }} \;
+          find dist/picoclaw_linux_amd64* -name "picoclaw" -exec cp {} release_binaries/picoclaw-linux-amd64-${{ steps.date.outputs.date }} \;
+          ls -R release_binaries/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ steps.date.outputs.date }}
+          name: Build ${{ steps.date.outputs.date }}
+          draft: false
+          prerelease: true # 设置为预发布
+          files: |
+            release_binaries/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

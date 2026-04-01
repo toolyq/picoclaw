@@ -507,6 +507,9 @@ func probeOllamaModel(apiBase, modelID string) bool {
 }
 
 func probeOpenAICompatibleModel(apiBase, modelID, apiKey string) bool {
+	if modelID != "" {
+		return true
+	}
 	if strings.TrimSpace(apiBase) == "" {
 		return false
 	}
