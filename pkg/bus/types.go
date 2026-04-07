@@ -50,10 +50,24 @@ type InboundMessage struct {
 	MessageID string `json:"message_id,omitempty"` // platform message ID
 }
 
+// OutboundScope captures the structured session scope associated with an
+// outbound turn result without depending on the session package.
+type OutboundScope struct {
+	Version    int               `json:"version,omitempty"`
+	AgentID    string            `json:"agent_id,omitempty"`
+	Channel    string            `json:"channel,omitempty"`
+	Account    string            `json:"account,omitempty"`
+	Dimensions []string          `json:"dimensions,omitempty"`
+	Values     map[string]string `json:"values,omitempty"`
+}
+
 type OutboundMessage struct {
 	Channel          string         `json:"channel"`
 	ChatID           string         `json:"chat_id"`
 	Context          InboundContext `json:"context"`
+	AgentID          string         `json:"agent_id,omitempty"`
+	SessionKey       string         `json:"session_key,omitempty"`
+	Scope            *OutboundScope `json:"scope,omitempty"`
 	Content          string         `json:"content"`
 	ReplyToMessageID string         `json:"reply_to_message_id,omitempty"`
 }
@@ -69,10 +83,13 @@ type MediaPart struct {
 
 // OutboundMediaMessage carries media attachments from Agent to channels via the bus.
 type OutboundMediaMessage struct {
-	Channel string         `json:"channel"`
-	ChatID  string         `json:"chat_id"`
-	Context InboundContext `json:"context"`
-	Parts   []MediaPart    `json:"parts"`
+	Channel    string         `json:"channel"`
+	ChatID     string         `json:"chat_id"`
+	Context    InboundContext `json:"context"`
+	AgentID    string         `json:"agent_id,omitempty"`
+	SessionKey string         `json:"session_key,omitempty"`
+	Scope      *OutboundScope `json:"scope,omitempty"`
+	Parts      []MediaPart    `json:"parts"`
 }
 
 // AudioChunk represents a chunk of streaming voice data.

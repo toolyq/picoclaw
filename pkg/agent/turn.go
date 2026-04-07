@@ -116,12 +116,12 @@ func newTurnState(agent *AgentInstance, opts processOptions, scope turnEventScop
 		scope:       scope,
 		turnID:      scope.turnID,
 		agentID:     agent.ID,
-		sessionKey:  opts.SessionKey,
+		sessionKey:  opts.Dispatch.SessionKey,
 		turnCtx:     cloneTurnContext(scope.context),
-		channel:     opts.Channel,
-		chatID:      opts.ChatID,
-		userMessage: opts.UserMessage,
-		media:       append([]string(nil), opts.Media...),
+		channel:     opts.Dispatch.Channel(),
+		chatID:      opts.Dispatch.ChatID(),
+		userMessage: opts.Dispatch.UserMessage,
+		media:       append([]string(nil), opts.Dispatch.Media...),
 		phase:       TurnPhaseSetup,
 		startedAt:   time.Now(),
 	}
@@ -129,7 +129,7 @@ func newTurnState(agent *AgentInstance, opts processOptions, scope turnEventScop
 	// Bind session store and capture initial history length for rollback logic
 	if agent != nil && agent.Sessions != nil {
 		ts.session = agent.Sessions
-		ts.initialHistoryLength = len(agent.Sessions.GetHistory(opts.SessionKey))
+		ts.initialHistoryLength = len(agent.Sessions.GetHistory(opts.Dispatch.SessionKey))
 	}
 
 	return ts

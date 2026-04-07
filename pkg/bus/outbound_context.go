@@ -18,6 +18,7 @@ func NormalizeOutboundMessage(msg OutboundMessage) OutboundMessage {
 	msg.Context = normalizeInboundContext(msg.Context)
 	msg.Channel = msg.Context.Channel
 	msg.ChatID = msg.Context.ChatID
+	msg.Scope = cloneOutboundScope(msg.Scope)
 	if msg.Context.ReplyToMessageID == "" {
 		msg.Context.ReplyToMessageID = strings.TrimSpace(msg.ReplyToMessageID)
 	}
@@ -31,5 +32,23 @@ func NormalizeOutboundMediaMessage(msg OutboundMediaMessage) OutboundMediaMessag
 	msg.Context = normalizeInboundContext(msg.Context)
 	msg.Channel = msg.Context.Channel
 	msg.ChatID = msg.Context.ChatID
+	msg.Scope = cloneOutboundScope(msg.Scope)
 	return msg
+}
+
+func cloneOutboundScope(scope *OutboundScope) *OutboundScope {
+	if scope == nil {
+		return nil
+	}
+	cloned := *scope
+	if len(scope.Dimensions) > 0 {
+		cloned.Dimensions = append([]string(nil), scope.Dimensions...)
+	}
+	if len(scope.Values) > 0 {
+		cloned.Values = make(map[string]string, len(scope.Values))
+		for key, value := range scope.Values {
+			cloned.Values[key] = value
+		}
+	}
+	return &cloned
 }

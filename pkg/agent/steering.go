@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/session"
@@ -292,10 +293,18 @@ func (al *AgentLoop) continueWithSteeringMessages(
 	sessionKey, channel, chatID string,
 	steeringMsgs []providers.Message,
 ) (string, error) {
+	dispatch := DispatchRequest{
+		SessionKey: sessionKey,
+	}
+	if channel != "" || chatID != "" {
+		dispatch.InboundContext = &bus.InboundContext{
+			Channel:  channel,
+			ChatID:   chatID,
+			ChatType: "direct",
+		}
+	}
 	return al.runAgentLoop(ctx, agent, processOptions{
-		SessionKey:              sessionKey,
-		Channel:                 channel,
-		ChatID:                  chatID,
+		Dispatch:                dispatch,
 		DefaultResponse:         defaultResponse,
 		EnableSummary:           true,
 		SendResponse:            false,

@@ -180,6 +180,19 @@ func TestPublishOutbound_MirrorsContextToLegacyFields(t *testing.T) {
 			ChatID:           "chat-42",
 			ReplyToMessageID: "msg-9",
 		},
+		AgentID:    "main",
+		SessionKey: "sk_v1_123",
+		Scope: &OutboundScope{
+			Version:    1,
+			AgentID:    "main",
+			Channel:    "telegram",
+			Account:    "bot-a",
+			Dimensions: []string{"chat", "sender"},
+			Values: map[string]string{
+				"chat":   "direct:chat-42",
+				"sender": "user-1",
+			},
+		},
 		Content: "reply",
 	}
 
@@ -197,6 +210,12 @@ func TestPublishOutbound_MirrorsContextToLegacyFields(t *testing.T) {
 	if got.ReplyToMessageID != "msg-9" {
 		t.Fatalf("expected mirrored reply_to_message_id msg-9, got %q", got.ReplyToMessageID)
 	}
+	if got.AgentID != "main" || got.SessionKey != "sk_v1_123" {
+		t.Fatalf("unexpected outbound turn metadata: agent=%q session=%q", got.AgentID, got.SessionKey)
+	}
+	if got.Scope == nil || got.Scope.AgentID != "main" || got.Scope.Values["chat"] != "direct:chat-42" {
+		t.Fatalf("unexpected outbound scope: %+v", got.Scope)
+	}
 	if got.Context.Channel != "telegram" || got.Context.ChatID != "chat-42" {
 		t.Fatalf("unexpected outbound context: %+v", got.Context)
 	}
@@ -211,6 +230,17 @@ func TestPublishOutboundMedia_MirrorsContextToLegacyFields(t *testing.T) {
 			Channel: "slack",
 			ChatID:  "C001",
 		},
+		AgentID:    "support",
+		SessionKey: "sk_v1_media",
+		Scope: &OutboundScope{
+			Version:    1,
+			AgentID:    "support",
+			Channel:    "slack",
+			Dimensions: []string{"chat"},
+			Values: map[string]string{
+				"chat": "channel:c001",
+			},
+		},
 		Parts: []MediaPart{{Type: "image", Ref: "media://1"}},
 	}
 
@@ -224,6 +254,12 @@ func TestPublishOutboundMedia_MirrorsContextToLegacyFields(t *testing.T) {
 	}
 	if got.ChatID != "C001" {
 		t.Fatalf("expected legacy chat ID C001, got %q", got.ChatID)
+	}
+	if got.AgentID != "support" || got.SessionKey != "sk_v1_media" {
+		t.Fatalf("unexpected outbound media turn metadata: agent=%q session=%q", got.AgentID, got.SessionKey)
+	}
+	if got.Scope == nil || got.Scope.Values["chat"] != "channel:c001" {
+		t.Fatalf("unexpected outbound media scope: %+v", got.Scope)
 	}
 	if got.Context.Channel != "slack" || got.Context.ChatID != "C001" {
 		t.Fatalf("unexpected outbound media context: %+v", got.Context)

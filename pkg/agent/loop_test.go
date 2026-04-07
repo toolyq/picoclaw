@@ -770,19 +770,28 @@ func TestRunAgentLoop_ResponseHandledToolPublishesForUserWhenSendResponseDisable
 	}
 
 	response, err := al.runAgentLoop(context.Background(), defaultAgent, processOptions{
-		SessionKey:      "session-1",
-		Channel:         "telegram",
-		ChatID:          "chat1",
-		UserMessage:     "take a screenshot of the screen and send it to me",
+		Dispatch: DispatchRequest{
+			SessionKey:  "session-1",
+			UserMessage: "take a screenshot of the screen and send it to me",
+			SessionScope: &session.SessionScope{
+				Version:    session.ScopeVersionV1,
+				AgentID:    defaultAgent.ID,
+				Channel:    "telegram",
+				Dimensions: []string{"chat"},
+				Values: map[string]string{
+					"chat": "direct:chat1",
+				},
+			},
+			InboundContext: &bus.InboundContext{
+				Channel:  "telegram",
+				ChatID:   "chat1",
+				ChatType: "direct",
+				SenderID: "user1",
+			},
+		},
 		DefaultResponse: defaultResponse,
 		EnableSummary:   false,
 		SendResponse:    false,
-		InboundContext: &bus.InboundContext{
-			Channel:  "telegram",
-			ChatID:   "chat1",
-			ChatType: "direct",
-			SenderID: "user1",
-		},
 	})
 	if err != nil {
 		t.Fatalf("runAgentLoop() error = %v", err)
@@ -800,6 +809,16 @@ func TestRunAgentLoop_ResponseHandledToolPublishesForUserWhenSendResponseDisable
 	}
 	if telegramChannel.sentMessages[0].Content != "Handled user output from tool." {
 		t.Fatalf("unexpected sent text message: %+v", telegramChannel.sentMessages[0])
+	}
+	if telegramChannel.sentMessages[0].AgentID != defaultAgent.ID {
+		t.Fatalf("sent text agent_id = %q, want %q", telegramChannel.sentMessages[0].AgentID, defaultAgent.ID)
+	}
+	if telegramChannel.sentMessages[0].SessionKey != "session-1" {
+		t.Fatalf("sent text session_key = %q, want session-1", telegramChannel.sentMessages[0].SessionKey)
+	}
+	if telegramChannel.sentMessages[0].Scope == nil ||
+		telegramChannel.sentMessages[0].Scope.Values["chat"] != "direct:chat1" {
+		t.Fatalf("unexpected sent text scope: %+v", telegramChannel.sentMessages[0].Scope)
 	}
 }
 
@@ -3024,6 +3043,15 @@ func TestProcessMessage_PublishesToolFeedbackWhenEnabled(t *testing.T) {
 		}
 		if !strings.Contains(outbound.Content, "`read_file`") {
 			t.Fatalf("tool feedback content = %q, want read_file preview", outbound.Content)
+		}
+		if outbound.AgentID != "main" {
+			t.Fatalf("tool feedback agent_id = %q, want main", outbound.AgentID)
+		}
+		if outbound.SessionKey == "" {
+			t.Fatal("expected tool feedback to carry session_key")
+		}
+		if outbound.Scope == nil || outbound.Scope.AgentID != "main" || outbound.Scope.Channel != "telegram" {
+			t.Fatalf("expected tool feedback scope, got %+v", outbound.Scope)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected outbound tool feedback for regular messages")
